@@ -137,8 +137,16 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
     if (!::sandbox_deserialize(size, data, max_size)) return false;
     if (size < fdtable.size() && (fdtable[size].type == wasi_fd_type::FS || fdtable[size].type == wasi_fd_type::STDIN || fdtable[size].type == wasi_fd_type::STDOUT || fdtable[size].type == wasi_fd_type::STDERR)) return false;
 
+    // NOTE: This function must use `release_file_descriptor` instead of
+    // `deallocate_file_descriptor`. The latter can shrink `fdtable` (pop_back of
+    // trailing vacant slots), which (a) asserts that `vacant_fds` mirrors those
+    // slots — but this function clears `vacant_fds` and rebuilds it only at the
+    // very end, so the assertion aborts (SIGABRT on state load), and (b) would
+    // shrink the table below `size` mid-restore, making later `fdtable[i]`
+    // assignments out of bounds. `release_file_descriptor` only frees the
+    // resources and marks the slot vacant; `vacant_fds` is rebuilt at the end.
     for (uint32_t i = fdtable.size(); i > size;) {
-        deallocate_file_descriptor(--i);
+        release_file_descriptor(--i);
     }
     vacant_fds.clear();
     fdtable.resize(size, {nullptr, wasi_fd_type::VACANT});
@@ -153,11 +161,10 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
             if (!::sandbox_deserialize(num_free_handles, data, max_size)) return false;
             if (i + num_free_handles > size || i + num_free_handles < i) return false;
             for (uint32_t j = i; j < i + num_free_handles; ++j) {
-                if (fdtable[i].type != wasi_fd_type::FSDIR && fdtable[i].type != wasi_fd_type::FSFILE) {
+                if (fdtable[j].type != wasi_fd_type::FSDIR && fdtable[j].type != wasi_fd_type::FSFILE) {
                     continue;
                 }
-                deallocate_file_descriptor(j);
-                vacant_fds.clear();
+                release_file_descriptor(j);
             }
             i += num_free_handles;
         } else {
@@ -174,8 +181,7 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                 bool writable;
                 if (!::sandbox_deserialize(writable, data, max_size)) return false;
                 if (fdtable[i].type != wasi_fd_type::VACANT && fdtable[i].type != wasi_fd_type::FSDIR) {
-                    deallocate_file_descriptor(i);
-                    vacant_fds.clear();
+                    release_file_descriptor(i);
                 }
                 if (fdtable[i].type == wasi_fd_type::FSDIR) {
                     *fdtable[i].dir_handle() = {path, root, writable && fdtable[root].dir_handle()->writable};
@@ -199,14 +205,12 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                     is_write_open = false;
                 }
                 if ((fdtable[i].type != wasi_fd_type::VACANT && fdtable[i].type != wasi_fd_type::FSFILE) || (fdtable[i].type == wasi_fd_type::FSFILE && std::strcmp(path.c_str(), fdtable[i].file_handle()->file.path()))) {
-                    deallocate_file_descriptor(i);
-                    vacant_fds.clear();
+                    release_file_descriptor(i);
                 }
                 bool existing_handle = fdtable[i].type == wasi_fd_type::FSFILE;
                 if (existing_handle) {
                     if ((is_read_open && !fdtable[i].file_handle()->file.is_read_open()) || (is_write_open && !fdtable[i].file_handle()->file.is_write_open())) {
-                        deallocate_file_descriptor(i);
-                        vacant_fds.clear();
+                        release_file_descriptor(i);
                         existing_handle = false;
                     } else if (!is_read_open) {
                         fdtable[i].file_handle()->file.close_read();

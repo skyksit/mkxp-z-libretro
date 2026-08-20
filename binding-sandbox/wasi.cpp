@@ -164,7 +164,7 @@ static void close_file_stream(struct wasi_instance *wasi, uint32_t fd) {
     wasi->fdtable[fd].file_stream()->root = 0;
 }
 
-void wasi_instance::deallocate_file_descriptor(uint32_t fd) {
+void wasi_instance::release_file_descriptor(uint32_t fd) {
     if (fd >= fdtable.size() || fdtable[fd].type == wasi_fd_type::VACANT) {
         return;
     }
@@ -200,6 +200,16 @@ void wasi_instance::deallocate_file_descriptor(uint32_t fd) {
         }
     }
 
+    fdtable[fd] = {nullptr, wasi_fd_type::VACANT};
+}
+
+void wasi_instance::deallocate_file_descriptor(uint32_t fd) {
+    if (fd >= fdtable.size() || fdtable[fd].type == wasi_fd_type::VACANT) {
+        return;
+    }
+
+    release_file_descriptor(fd);
+
     if (fd == fdtable.size() - 1) {
         fdtable.pop_back();
         while (!fdtable.empty() && fdtable.back().type == wasi_fd_type::VACANT) {
@@ -208,7 +218,6 @@ void wasi_instance::deallocate_file_descriptor(uint32_t fd) {
             fdtable.pop_back();
         }
     } else {
-        fdtable[fd] = {nullptr, wasi_fd_type::VACANT};
         vacant_fds.push(fd);
     }
 }

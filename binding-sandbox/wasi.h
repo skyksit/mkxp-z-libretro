@@ -414,6 +414,15 @@ struct wasi_instance {
     uint32_t allocate_file_descriptor(enum wasi_fd_type type, void *handle = nullptr);
     void deallocate_file_descriptor(uint32_t fd);
 
+    // Releases the resources held by a file descriptor and marks its slot vacant
+    // WITHOUT shrinking `fdtable` or touching `vacant_fds`. Intended for
+    // `sandbox_deserialize`, which rebuilds `vacant_fds` from scratch at the end;
+    // calling `deallocate_file_descriptor` there can shrink `fdtable` mid-restore
+    // (out-of-bounds writes to slots already resized to the serialized size) and
+    // trips the `vacant_fds` invariant assertion because the restore path clears
+    // `vacant_fds` (SIGABRT on state load).
+    void release_file_descriptor(uint32_t fd);
+
     // Gets a pointer to the given address in sandbox memory.
     // Unlike `sandbox_ref`, the address does not need to be aligned.
     template <typename T> void *ptr_unaligned(mkxp_sandbox::wasm_ptr_t address) const noexcept {
