@@ -1225,7 +1225,38 @@ static bool init_sandbox() {
 #endif // _WIN32
             PHYSFS_setWriteDir(save_path_subdir.c_str());
 
+            // Frontend-provided override for the save subdirectory leaf name.
+            // If the frontend sets the "mkxp-z_saveDirName" variable (not declared
+            // as a core option on purpose — RetroArch will simply return false and
+            // fall through to the default title-based path), use it verbatim
+            // (after sanitizing path separators) instead of the punycode-encoded
+            // game title. This gives frontends a deterministic, per-game save path
+            // (e.g. for cloud backup), independent of the game's title encoding.
+            std::string save_dir_name;
             {
+                struct retro_variable save_dir_var = { "mkxp-z_saveDirName", nullptr };
+                if (environment(RETRO_ENVIRONMENT_GET_VARIABLE, &save_dir_var) && save_dir_var.value != nullptr && save_dir_var.value[0] != '\0') {
+                    save_dir_name = save_dir_var.value;
+                    for (char &c : save_dir_name) {
+                        if ((c >= 0 && c < 32) || c == '/' || c == '\\' || c == '*' || c == '?' || c == '|') {
+                            c = '_';
+                        } else if (c == '"') {
+                            c = '\'';
+                        } else if (c == ':') {
+                            c = ';';
+                        } else if (c == '<') {
+                            c = '(';
+                        } else if (c == '>') {
+                            c = ')';
+                        }
+                    }
+                }
+            }
+
+            if (!save_dir_name.empty()) {
+                save_path_subdir.append("/mkxp-z/Saves/");
+                save_path_subdir.append(save_dir_name);
+            } else {
                 std::string game_title;
                 if (!conf->windowTitle.empty()) {
                     game_title = conf->windowTitle;
