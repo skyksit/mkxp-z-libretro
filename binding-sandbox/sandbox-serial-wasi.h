@@ -167,16 +167,30 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                 return false;
             }
             for (uint32_t j = i; j < i + num_free_handles; ++j) {
-                if (fdtable[j].type != wasi_fd_type::FSDIR && fdtable[j].type != wasi_fd_type::FSFILE) {
+                // The snapshot says these slots are free. Release whatever live
+                // handle currently occupies them — including directory/file/ai
+                // streams — but preserve the fixed descriptors (STDIN/STDOUT/
+                // STDERR and FS preopens), which the serializer also encodes as
+                // free-handle runs.
+                if (fdtable[j].type == wasi_fd_type::VACANT || fdtable[j].type == wasi_fd_type::STDIN || fdtable[j].type == wasi_fd_type::STDOUT || fdtable[j].type == wasi_fd_type::STDERR || fdtable[j].type == wasi_fd_type::FS) {
                     continue;
                 }
                 release_file_descriptor(j);
             }
             i += num_free_handles;
         } else {
-            if (fdtable[i].type != wasi_fd_type::VACANT && fdtable[i].type != wasi_fd_type::FSDIR && fdtable[i].type != wasi_fd_type::FSFILE) {
-                mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] slot %u holds unexpected live type %d (serialized type %u)\n", i, (int)fdtable[i].type, (unsigned)type);
+            // A fixed descriptor (STDIN/STDOUT/STDERR/FS preopen) can never be
+            // overwritten by a serialized entry — that means the stream is
+            // misaligned or corrupt. Live *stream* descriptors, however, are
+            // legitimate here: the game can hold an open FSDIRSTREAM/
+            // FSFILESTREAM/AISTREAM at save time (observed with Pocket Mirror),
+            // so release them and let the serialized entry rebuild the slot.
+            if (fdtable[i].type == wasi_fd_type::STDIN || fdtable[i].type == wasi_fd_type::STDOUT || fdtable[i].type == wasi_fd_type::STDERR || fdtable[i].type == wasi_fd_type::FS) {
+                mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] slot %u holds fixed descriptor type %d but snapshot has serialized type %u\n", i, (int)fdtable[i].type, (unsigned)type);
                 return false;
+            }
+            if (fdtable[i].type == wasi_fd_type::FSDIRSTREAM || fdtable[i].type == wasi_fd_type::FSFILESTREAM || fdtable[i].type == wasi_fd_type::AISTREAM) {
+                release_file_descriptor(i);
             }
             if (type == 1) { // FSDIR
                 uint32_t root;
@@ -252,6 +266,7 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                     if (!::sandbox_deserialize(pair.first, data, max_size)) return false;
                     if (!::sandbox_deserialize(pair.second, data, max_size)) return false;
                 }
+                release_file_descriptor(i); // 슬롯에 남아있을 수 있는 live FSDIR/FSFILE 핸들 누수 방지
                 fdtable[i] = {new fs_dir_stream {deque}, wasi_fd_type::FSDIRSTREAM};
             } else if (type == 4)  { // FSFILESTREAM
                 uint64_t offset;
@@ -262,6 +277,7 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                     mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] FSFILESTREAM slot %u has invalid root %u\n", i, root);
                     return false;
                 }
+                release_file_descriptor(i); // 슬롯에 남아있을 수 있는 live FSDIR/FSFILE 핸들 누수 방지
                 fdtable[root].file_handle()->streams.insert(i);
                 fdtable[i] = {new fs_file_stream {offset, root}, wasi_fd_type::FSFILESTREAM};
             } else if (type == 5) { // AISTREAM
@@ -280,6 +296,7 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                         }
                     }
                 }
+                release_file_descriptor(i); // 슬롯에 남아있을 수 있는 live FSDIR/FSFILE 핸들 누수 방지
                 fdtable[i] = {new ai_stream {deque}, wasi_fd_type::AISTREAM};
             } else {
                 mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] slot %u has unknown serialized type %u\n", i, (unsigned)type);
