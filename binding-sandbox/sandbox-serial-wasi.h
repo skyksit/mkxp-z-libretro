@@ -135,7 +135,10 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
 
     uint32_t size;
     if (!::sandbox_deserialize(size, data, max_size)) return false;
-    if (size < fdtable.size() && (fdtable[size].type == wasi_fd_type::FS || fdtable[size].type == wasi_fd_type::STDIN || fdtable[size].type == wasi_fd_type::STDOUT || fdtable[size].type == wasi_fd_type::STDERR)) return false;
+    if (size < fdtable.size() && (fdtable[size].type == wasi_fd_type::FS || fdtable[size].type == wasi_fd_type::STDIN || fdtable[size].type == wasi_fd_type::STDOUT || fdtable[size].type == wasi_fd_type::STDERR)) {
+        mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] fd table size %u would truncate fixed descriptor (current size %zu)\n", size, fdtable.size());
+        return false;
+    }
 
     // NOTE: This function must use `release_file_descriptor` instead of
     // `deallocate_file_descriptor`. The latter can shrink `fdtable` (pop_back of
@@ -159,7 +162,10 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
         if (type == 0) {
             uint32_t num_free_handles;
             if (!::sandbox_deserialize(num_free_handles, data, max_size)) return false;
-            if (i + num_free_handles > size || i + num_free_handles < i) return false;
+            if (i + num_free_handles > size || i + num_free_handles < i) {
+                mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] free-handle run out of bounds: i=%u count=%u size=%u\n", i, num_free_handles, size);
+                return false;
+            }
             for (uint32_t j = i; j < i + num_free_handles; ++j) {
                 if (fdtable[j].type != wasi_fd_type::FSDIR && fdtable[j].type != wasi_fd_type::FSFILE) {
                     continue;
@@ -169,12 +175,16 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
             i += num_free_handles;
         } else {
             if (fdtable[i].type != wasi_fd_type::VACANT && fdtable[i].type != wasi_fd_type::FSDIR && fdtable[i].type != wasi_fd_type::FSFILE) {
+                mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] slot %u holds unexpected live type %d (serialized type %u)\n", i, (int)fdtable[i].type, (unsigned)type);
                 return false;
             }
             if (type == 1) { // FSDIR
                 uint32_t root;
                 if (!::sandbox_deserialize(root, data, max_size)) return false;
-                if (root >= fdtable.size() || fdtable[root].type != wasi_fd_type::FS) return false;
+                if (root >= fdtable.size() || fdtable[root].type != wasi_fd_type::FS) {
+                    mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] FSDIR slot %u has invalid root %u\n", i, root);
+                    return false;
+                }
                 std::string path;
                 if (!::sandbox_deserialize(path, data, max_size)) return false;
                 path = mkxp_retro::fs->normalize(path.c_str(), false, true);
@@ -193,7 +203,10 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                 if (!::sandbox_deserialize(offset, data, max_size)) return false;
                 uint32_t root;
                 if (!::sandbox_deserialize(root, data, max_size)) return false;
-                if (root >= fdtable.size() || fdtable[root].type != wasi_fd_type::FS) return false;
+                if (root >= fdtable.size() || fdtable[root].type != wasi_fd_type::FS) {
+                    mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] FSFILE slot %u has invalid root %u\n", i, root);
+                    return false;
+                }
                 std::string path;
                 if (!::sandbox_deserialize(path, data, max_size)) return false;
                 path = mkxp_retro::fs->normalize(path.c_str(), false, true);
@@ -225,6 +238,7 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                 } else {
                     handle = new fs_file {{*mkxp_retro::fs, path.c_str(), is_write_open ? fdtable[root].dir_handle()->path.c_str() : nullptr, false, is_read_open, true}, {}, offset, root};
                     if ((is_read_open && !handle->file.is_read_open()) || (is_write_open && !handle->file.is_write_open())) {
+                        mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] FSFILE slot %u failed to reopen \"%s\" (read=%d write=%d)\n", i, path.c_str(), (int)is_read_open, (int)is_write_open);
                         delete handle;
                         return false;
                     }
@@ -244,7 +258,10 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                 if (!::sandbox_deserialize(offset, data, max_size)) return false;
                 uint32_t root;
                 if (!::sandbox_deserialize(root, data, max_size)) return false;
-                if (root >= fdtable.size() || fdtable[root].type != wasi_fd_type::FSFILE) return false;
+                if (root >= fdtable.size() || fdtable[root].type != wasi_fd_type::FSFILE) {
+                    mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] FSFILESTREAM slot %u has invalid root %u\n", i, root);
+                    return false;
+                }
                 fdtable[root].file_handle()->streams.insert(i);
                 fdtable[i] = {new fs_file_stream {offset, root}, wasi_fd_type::FSFILESTREAM};
             } else if (type == 5) { // AISTREAM
@@ -265,6 +282,7 @@ bool wasi_instance::sandbox_deserialize(const void *&data, mkxp_sandbox::wasm_si
                 }
                 fdtable[i] = {new ai_stream {deque}, wasi_fd_type::AISTREAM};
             } else {
+                mkxp_retro_log_printf(RETRO_LOG_ERROR, "[wasi deser] slot %u has unknown serialized type %u\n", i, (unsigned)type);
                 return false;
             }
             ++i;

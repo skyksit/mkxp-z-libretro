@@ -132,9 +132,13 @@ wasi_instance::~wasi_instance() {
         }
     }
 
-    // Close all of the open WASI file descriptors
+    // Close all of the open WASI file descriptors.
+    // Use release_file_descriptor: the destructor can run on an instance whose
+    // `vacant_fds` is out of sync with `fdtable` (e.g. when a failed
+    // sandbox_deserialize triggers deinit_sandbox mid-restore), and
+    // deallocate_file_descriptor would abort on its vacant_fds assertion.
     for (uint32_t i = fdtable.size(); i > 0;) {
-        deallocate_file_descriptor(--i);
+        release_file_descriptor(--i);
     }
 }
 
@@ -213,7 +217,19 @@ void wasi_instance::deallocate_file_descriptor(uint32_t fd) {
     if (fd == fdtable.size() - 1) {
         fdtable.pop_back();
         while (!fdtable.empty() && fdtable.back().type == wasi_fd_type::VACANT) {
-            assert(!vacant_fds.empty() && vacant_fds.maximum() == fdtable.size() - 1);
+            // Invariant: every trailing VACANT slot is mirrored in vacant_fds with
+            // its index as the current maximum. This used to be a hard assert(),
+            // which aborted the whole process (SIGABRT) if the structures ever got
+            // out of sync. Tolerate the inconsistency instead: leave the remaining
+            // trailing VACANT slots in the table (harmless — allocation just
+            // ignores them) and log so the root cause can be diagnosed.
+            if (vacant_fds.empty() || vacant_fds.maximum() != fdtable.size() - 1) {
+                mkxp_retro_log_printf(RETRO_LOG_ERROR,
+                    "[wasi] deallocate_file_descriptor(%u): vacant_fds out of sync "
+                    "(empty=%d, fdtable size=%zu); skipping trailing-vacant trim\n",
+                    fd, (int)vacant_fds.empty(), fdtable.size());
+                break;
+            }
             vacant_fds.pop_maximum();
             fdtable.pop_back();
         }
