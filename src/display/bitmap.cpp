@@ -4148,7 +4148,7 @@ static std::pair<IntRect, size_t> textRect(FT_Face font, const char *str, bool s
             else
                 break;
 
-            if (FT_Load_Char(font, charcode, solid ? (FT_LOAD_DEFAULT | FT_LOAD_BITMAP_METRICS_ONLY | FT_LOAD_TARGET_MONO) : (FT_LOAD_DEFAULT | FT_LOAD_BITMAP_METRICS_ONLY | FT_LOAD_TARGET_NORMAL)))
+            if (FT_Load_Char(font, charcode, solid ? (FT_LOAD_DEFAULT | FT_LOAD_BITMAP_METRICS_ONLY | FT_LOAD_TARGET_MONO) : (FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP | FT_LOAD_BITMAP_METRICS_ONLY | FT_LOAD_TARGET_NORMAL)))
                 continue;
 
             int glyph_left = glyph_x + font->glyph->bitmap_left;
@@ -4230,7 +4230,7 @@ SDL_Surface *Bitmap::drawTextInner(FT_Face font, const char *str, SDL_Color &c, 
 
             if (needs_transform)
             {
-                if (FT_Load_Char(font, charcode, solid ? (FT_LOAD_DEFAULT | FT_LOAD_TARGET_MONO) : (FT_LOAD_DEFAULT | FT_LOAD_TARGET_NORMAL)))
+                if (FT_Load_Char(font, charcode, solid ? (FT_LOAD_DEFAULT | FT_LOAD_TARGET_MONO) : (FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_NORMAL)))
                     continue;
                 if (italic)
                     FT_Outline_Transform(&font->glyph->outline, &ITALIC_TRANSFORM);
@@ -4261,7 +4261,7 @@ SDL_Surface *Bitmap::drawTextInner(FT_Face font, const char *str, SDL_Color &c, 
             }
             else
             {
-                if (FT_Load_Char(font, charcode, solid ? (FT_LOAD_DEFAULT | FT_LOAD_RENDER | FT_LOAD_TARGET_MONO) : (FT_LOAD_DEFAULT | FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL)))
+                if (FT_Load_Char(font, charcode, solid ? (FT_LOAD_DEFAULT | FT_LOAD_RENDER | FT_LOAD_TARGET_MONO) : (FT_LOAD_DEFAULT | FT_LOAD_NO_BITMAP | FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL)))
                     continue;
             }
 
