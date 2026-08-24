@@ -784,10 +784,11 @@ SharedFontState::getFont(Exception &exception, std::string family,
 	}
 	else
 	{
-		/* Use 'other' path as alternative in case
-		 * we have no 'regular' styled font asset */
-		const char *path = !req.regular.empty()
-		                 ? req.regular.c_str() : req.other.c_str();
+		/* Resolve the filename with the same priority used by
+		 * fontPresent() (see FontSet::operator->), so fonts that were
+		 * registered only via their SFNT names (e.g. non-ASCII CJK
+		 * family names) resolve to a real file instead of "" */
+		const char *path = req->c_str();
 
 		entry = p->ftOpenFile(std::shared_ptr<struct FileSystem::File>(new struct FileSystem::File(*mkxp_retro::fs, path)));
 		if (!entry.has_value())
